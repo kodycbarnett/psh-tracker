@@ -1,0 +1,6 @@
+# Supabase Configuration
+REACT_APP_SUPABASE_URL=your_supabase_project_url_here
+REACT_APP_SUPABASE_ANON_KEY=your_supabase_anon_key_here
+
+# Allowed Emails (comma-separated)
+REACT_APP_ALLOWED_EMAILS=your-email@domain.com,property-manager@domain.com,case-manager@domain.com

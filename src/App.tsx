@@ -5,6 +5,7 @@ import { msalConfig } from './services/graphConfig';
 import { EmailService } from './services/emailService';
 import EmailModal from './components/EmailModal';
 import EmailInterface from './components/EmailInterface';
+import { supabaseService, MigrationService } from './services/supabase';
 
 // Secure ID generation utility
 const generateSecureId = (prefix: string = ''): string => {
@@ -1128,7 +1129,19 @@ function App() {
   const [stageInformation, setStageInformation] = useState<StageInfo[]>([]);
   const [showEmailTemplates, setShowEmailTemplates] = useState(false);
   const [, setSelectedTemplate] = useState<EmailTemplate | null>(null);
+  const [showDataDropdown, setShowDataDropdown] = useState(false);
+  const [showCompletedItems, setShowCompletedItems] = useState<{[key: string]: boolean}>({});
   const [showTemplateEditor, setShowTemplateEditor] = useState(false);
+  
+  // Supabase and migration state
+  const [isSupabaseConnected, setIsSupabaseConnected] = useState(false);
+  const [migrationStatus, setMigrationStatus] = useState<{
+    hasLocalData: boolean;
+    hasSupabaseData: boolean;
+    needsMigration: boolean;
+  } | null>(null);
+  const [showMigrationModal, setShowMigrationModal] = useState(false);
+  const [isMigrating, setIsMigrating] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<EmailTemplate | null>(null);
   const [templateFormData, setTemplateFormData] = useState({
     name: '',
@@ -1237,12 +1250,96 @@ function App() {
     createdDate: string;
   }>>([]);
 
-  // Load data from localStorage on app startup
+  // Check Supabase connection and migration status on startup
   useEffect(() => {
-    console.log('Loading data from localStorage on startup...');
-    const loadedApplicants = loadFromLocalStorage(STORAGE_KEYS.APPLICANTS, initialApplicants);
+    const checkSupabaseConnection = async () => {
+      try {
+        // Test Supabase connection
+        const data = await supabaseService.getBuildings();
+        
+        setIsSupabaseConnected(true);
+        console.log('✅ Supabase connected successfully');
+        
+        // Check migration status
+        const status = await MigrationService.checkMigrationStatus();
+        console.log('📊 Migration status:', status);
+        setMigrationStatus(status);
+        
+        if (status.needsMigration) {
+          console.log('🚀 Showing migration modal. Status:', status);
+          setShowMigrationModal(true);
+          console.log('✅ setShowMigrationModal(true) called');
+        }
+      } catch (error) {
+        console.warn('⚠️ Supabase not configured or connection failed:', error);
+        setIsSupabaseConnected(false);
+      }
+    };
     
-    // Load email archive
+    checkSupabaseConnection();
+  }, []);
+
+  // Load data from Supabase or localStorage on app startup
+  useEffect(() => {
+      const loadData = async () => {
+      // First, try to load from Supabase if connected OR if we've migrated
+      const shouldUseSupabase = localStorage.getItem('psh_use_supabase') === 'true';
+      const useSupabase = isSupabaseConnected && (shouldUseSupabase || !migrationStatus?.hasLocalData);
+      
+      if (useSupabase) {
+        try {
+          console.log('Loading data from Supabase...');
+          const buildingId = '00000000-0000-0000-0000-000000000001';
+          const supabaseApplicants = await supabaseService.getApplicants(buildingId);
+          
+          if (supabaseApplicants && supabaseApplicants.length > 0) {
+            console.log(`Loaded ${supabaseApplicants.length} applicants from Supabase`);
+            // Convert Supabase format to app format
+            const convertedApplicants = supabaseApplicants.map((app: any) => ({
+              id: app.id,
+              name: app.name,
+              unit: app.unit,
+              hmisNumber: app.hmis_number,
+              phone: app.phone,
+              email: app.email,
+              caseManager: app.case_manager,
+              caseManagerPhone: app.case_manager_phone,
+              caseManagerEmail: app.case_manager_email,
+              currentStage: app.current_stage,
+              documents: app.documents || {},
+              familyMembers: app.family_members || [],
+              // Convert string timestamps to Date objects
+              stageHistory: (app.stage_history || []).map((entry: any) => ({
+                ...entry,
+                timestamp: entry.timestamp ? new Date(entry.timestamp) : new Date()
+              })),
+              manualNotes: (app.manual_notes || []).map((note: any) => ({
+                ...note,
+                timestamp: note.timestamp ? new Date(note.timestamp) : new Date()
+              })),
+              completedActionItems: app.completed_action_items || [],
+              dateCreated: app.date_created ? new Date(app.date_created) : new Date()
+            }));
+            setApplicants(convertedApplicants);
+            
+            // Load email templates and stage info from localStorage as well
+            const loadedTemplates = loadFromLocalStorage(STORAGE_KEYS.EMAIL_TEMPLATES, defaultEmailTemplates);
+            const loadedStageInfo = loadFromLocalStorage(STORAGE_KEYS.STAGE_INFORMATION, initialStageInformation);
+            setEmailTemplates(loadedTemplates);
+            setStageInformation(loadedStageInfo);
+            return;
+          }
+        } catch (error) {
+          console.error('Error loading from Supabase:', error);
+          // Fall through to localStorage
+        }
+      }
+      
+      // Fall back to localStorage
+      console.log('Loading data from localStorage...');
+      const loadedApplicants = loadFromLocalStorage(STORAGE_KEYS.APPLICANTS, initialApplicants);
+      
+      // Load email archive
     const savedEmailArchive = localStorage.getItem('psh_email_archive');
     if (savedEmailArchive) {
       try {
@@ -1273,14 +1370,20 @@ function App() {
       console.log('Sample applicant stageHistory:', loadedApplicants[0].stageHistory);
     }
     
-    setApplicants(loadedApplicants);
-    setEmailTemplates(loadedTemplates);
-    setStageInformation(loadedStageInfo);
-  }, []);
+      setApplicants(loadedApplicants);
+      setEmailTemplates(loadedTemplates);
+      setStageInformation(loadedStageInfo);
+    };
+    
+    loadData();
+  }, [isSupabaseConnected, migrationStatus]);
 
   // Enhanced auto-save with backup and sync
   useEffect(() => {
-    if (applicants.length > 0) {
+    // Don't auto-save to localStorage if we're using Supabase
+    const useSupabase = localStorage.getItem('psh_use_supabase') === 'true';
+    
+    if (applicants.length > 0 && !useSupabase) {
       console.log('Saving applicants to localStorage:', applicants.length, 'applicants');
       const success = saveToLocalStorage(STORAGE_KEYS.APPLICANTS, applicants);
       if (success) {
@@ -1290,6 +1393,8 @@ function App() {
       } else {
         console.error('Failed to save applicants to localStorage');
       }
+    } else if (applicants.length > 0 && useSupabase) {
+      console.log('⏭️ Skipping localStorage save - using Supabase');
     }
   }, [applicants]);
 
@@ -1358,6 +1463,23 @@ function App() {
       document.removeEventListener('keydown', handleKeyDown);
     };
   }, [showModal, showMoveConfirm]);
+
+  // Handle clicking outside dropdown to close it
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (showDataDropdown) {
+        const target = event.target as Element;
+        if (!target.closest('.relative.inline-block.text-left')) {
+          setShowDataDropdown(false);
+        }
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showDataDropdown]);
 
   const openModal = () => {
     setShowModal(true);
@@ -2094,17 +2216,42 @@ function App() {
       setShowEmailInterface(true);
     } catch (error) {
       console.error('Error opening email interface:', error);
-      // Fallback to old email modal
-      const newUnitTemplate = emailTemplates.find(t => t.id === 'new-referral');
-      if (newUnitTemplate) {
-        openEmailModal(newUnitTemplate);
-      }
+      alert('Email functionality is currently unavailable.');
     }
   };
 
   const closeEmailInterface = () => {
     setShowEmailInterface(false);
     setEmailInterfaceApplicant(null);
+  };
+
+  // Migration functions
+  const handleMigration = async () => {
+    setIsMigrating(true);
+    try {
+      const result = await MigrationService.migrateToSupabase();
+      if (result.success) {
+        alert('Migration completed successfully! Your data has been moved to the cloud.');
+        setShowMigrationModal(false);
+        // Clear localStorage and set Supabase flag
+        MigrationService.clearLocalStorageData();
+        localStorage.setItem('psh_use_supabase', 'true');
+        // Reload the page to start fresh with Supabase
+        window.location.reload();
+      } else {
+        alert(`Migration failed: ${result.message}`);
+      }
+    } catch (error) {
+      console.error('Migration error:', error);
+      alert('Migration failed. Please try again.');
+    } finally {
+      setIsMigrating(false);
+    }
+  };
+
+  const skipMigration = () => {
+    setShowMigrationModal(false);
+    // User can continue with localStorage for now
   };
 
   // Email thread management functions
@@ -3144,44 +3291,58 @@ function App() {
             >
                 ✨ New Applicant
             </button>
-            <button
-              onClick={() => {
-                const newUnitTemplate = emailTemplates.find(t => t.id === 'new-referral');
-                if (newUnitTemplate) {
-                  openEmailModal(newUnitTemplate);
-                } else {
-                  alert('New Unit Available email template not found. Please check your email templates.');
-                }
-              }}
-              className="bg-green-600 text-white text-sm px-4 py-2 rounded-md hover:bg-green-700 transition-colors"
-              title="Send New Unit Available email to JOHS"
-            >
-              📧 New Unit Available
-            </button>
-            <button
-              onClick={exportAllData}
-                className="btn-secondary text-xs px-3 py-1"
-                title="Export data"
-            >
-                💾 Export
-            </button>
-            <button
-              onClick={() => downloadEmergencyBackup()}
-                className="px-3 py-1 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors text-xs"
-                title="Emergency backup"
-            >
-                🚨 Backup
-            </button>
-              <label className="btn-warning text-xs px-3 py-1"
-                title="Import data">
-                📁 Import
-              <input
-                type="file"
-                accept=".json"
-                onChange={importData}
-                className="hidden"
-              />
-            </label>
+            {/* Data Dropdown Menu */}
+            <div className="relative inline-block text-left">
+              <div>
+                <button
+                  type="button"
+                  className="inline-flex justify-center w-full rounded-md border border-gray-300 shadow-sm px-3 py-1 bg-white text-xs font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                  onClick={() => setShowDataDropdown(!showDataDropdown)}
+                >
+                  📊 Data
+                  <svg className="-mr-1 ml-2 h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+                  </svg>
+                </button>
+              </div>
+
+              {showDataDropdown && (
+                <div className="origin-top-right absolute right-0 mt-2 w-56 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 focus:outline-none z-50">
+                  <div className="py-1">
+                    <button
+                      onClick={() => {
+                        exportAllData();
+                        setShowDataDropdown(false);
+                      }}
+                      className="flex w-full items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                    >
+                      💾 Export Data
+                    </button>
+                    <label className="flex w-full items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer">
+                      📁 Import Data
+                      <input
+                        type="file"
+                        accept=".json"
+                        onChange={(e) => {
+                          importData(e);
+                          setShowDataDropdown(false);
+                        }}
+                        className="hidden"
+                      />
+                    </label>
+                    <button
+                      onClick={() => {
+                        downloadEmergencyBackup();
+                        setShowDataDropdown(false);
+                      }}
+                      className="flex w-full items-center px-4 py-2 text-sm text-red-700 hover:bg-red-50"
+                    >
+                      🚨 Emergency Backup
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
             <button
               onClick={clearAllData}
                 className="btn-danger text-xs px-3 py-1"
@@ -3471,59 +3632,122 @@ function App() {
                       ) : (
                         <div className="space-y-1 w-full overflow-hidden">
                           <div className="text-xs font-medium text-gray-700 mb-1">Action Items:</div>
-                          {actionItemsInfo.actionItems.map((item, index) => {
-                            const isCompleted = applicant.completedActionItems?.includes(item) || false;
+                          {(() => {
+                            const pendingItems = actionItemsInfo.actionItems.filter(item => 
+                              !applicant.completedActionItems?.includes(item)
+                            );
+                            const completedItems = actionItemsInfo.actionItems.filter(item => 
+                              applicant.completedActionItems?.includes(item)
+                            );
+                            
                             return (
-                              <div key={index} className={`border rounded-md p-2 text-xs transition-all w-full ${
-                                isCompleted 
-                                  ? 'bg-green-50 border-green-200' 
-                                  : 'bg-yellow-50 border-yellow-200'
-                              }`} style={{ width: '100%', maxWidth: '100%' }}>
-                                <div className="flex items-start gap-2 w-full" style={{ width: '100%', maxWidth: '100%' }}>
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      toggleActionItem(applicant.id, item, !isCompleted);
-                                    }}
-                                    className={`flex-shrink-0 w-4 h-4 rounded border-2 flex items-center justify-center text-xs font-bold transition-all ${
-                                      isCompleted
-                                        ? 'bg-green-500 border-green-500 text-white hover:bg-green-600'
-                                        : 'bg-white border-red-400 text-red-500 hover:border-red-500'
-                                    }`}
-                                  >
-                                    {isCompleted ? '✓' : '✗'}
-                                  </button>
-                                  <div className="flex-1 min-w-0" style={{ 
-                                    width: 'calc(100% - 24px)', 
-                                    maxWidth: 'calc(100% - 24px)',
-                                    overflow: 'hidden',
-                                    wordWrap: 'break-word',
-                                    overflowWrap: 'break-word',
-                                    wordBreak: 'break-word'
-                                  }}>
-                                    <div className={`font-medium ${
-                                      isCompleted ? 'text-green-800' : 'text-yellow-800'
-                                    }`} style={{
-                                      wordBreak: 'break-word', 
-                                      overflowWrap: 'break-word',
-                                      lineHeight: '1.2'
-                                    }}>
-                                      {item.split(':')[0]}:
-                                    </div>
-                                    <div className={`text-xs leading-tight ${
-                                      isCompleted ? 'text-green-700 line-through opacity-75' : 'text-yellow-700'
-                                    }`} style={{
-                                      wordBreak: 'break-word', 
-                                      overflowWrap: 'break-word',
-                                      lineHeight: '1.2'
-                                    }}>
-                                      {item.split(':').slice(1).join(':').trim()}
+                              <>
+                                {/* Pending Action Items */}
+                                {pendingItems.map((item, index) => (
+                                  <div key={index} className="border rounded-md p-2 text-xs transition-all w-full bg-yellow-50 border-yellow-200" style={{ width: '100%', maxWidth: '100%' }}>
+                                    <div className="flex items-start gap-2 w-full" style={{ width: '100%', maxWidth: '100%' }}>
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          toggleActionItem(applicant.id, item, true);
+                                        }}
+                                        className="flex-shrink-0 w-4 h-4 rounded border-2 flex items-center justify-center text-xs font-bold transition-all bg-white border-red-400 text-red-500 hover:border-red-500"
+                                      >
+                                        ✗
+                                      </button>
+                                      <div className="flex-1 min-w-0" style={{ 
+                                        width: 'calc(100% - 24px)', 
+                                        maxWidth: 'calc(100% - 24px)',
+                                        overflow: 'hidden',
+                                        wordWrap: 'break-word',
+                                        overflowWrap: 'break-word',
+                                        wordBreak: 'break-word'
+                                      }}>
+                                        <div className="font-medium text-yellow-800" style={{
+                                          wordBreak: 'break-word', 
+                                          overflowWrap: 'break-word',
+                                          lineHeight: '1.2'
+                                        }}>
+                                          {item.split(':')[0]}:
+                                        </div>
+                                        <div className="text-xs leading-tight text-yellow-700" style={{
+                                          wordBreak: 'break-word', 
+                                          overflowWrap: 'break-word',
+                                          lineHeight: '1.2'
+                                        }}>
+                                          {item.split(':').slice(1).join(':').trim()}
+                                        </div>
+                                      </div>
                                     </div>
                                   </div>
-                                </div>
-                              </div>
+                                ))}
+                                
+                                {/* Completed Action Items - Collapsible */}
+                                {completedItems.length > 0 && (
+                                  <div className="mt-2">
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setShowCompletedItems(prev => ({
+                                          ...prev,
+                                          [applicant.id]: !prev[applicant.id]
+                                        }));
+                                      }}
+                                      className="w-full text-left text-xs font-medium text-gray-600 hover:text-gray-800 transition-colors flex items-center justify-between p-2 bg-gray-50 rounded-md border border-gray-200"
+                                    >
+                                      <span>✅ Completed Action Items ({completedItems.length})</span>
+                                      <span className="text-xs">
+                                        {showCompletedItems[applicant.id] ? '▲' : '▼'}
+                                      </span>
+                                    </button>
+                                    
+                                    {showCompletedItems[applicant.id] && (
+                                      <div className="mt-1 space-y-1">
+                                        {completedItems.map((item, index) => (
+                                          <div key={`completed-${index}`} className="border rounded-md p-2 text-xs transition-all w-full bg-green-50 border-green-200" style={{ width: '100%', maxWidth: '100%' }}>
+                                            <div className="flex items-start gap-2 w-full" style={{ width: '100%', maxWidth: '100%' }}>
+                                              <button
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  toggleActionItem(applicant.id, item, false);
+                                                }}
+                                                className="flex-shrink-0 w-4 h-4 rounded border-2 flex items-center justify-center text-xs font-bold transition-all bg-green-500 border-green-500 text-white hover:bg-green-600"
+                                              >
+                                                ✓
+                                              </button>
+                                              <div className="flex-1 min-w-0" style={{ 
+                                                width: 'calc(100% - 24px)', 
+                                                maxWidth: 'calc(100% - 24px)',
+                                                overflow: 'hidden',
+                                                wordWrap: 'break-word',
+                                                overflowWrap: 'break-word',
+                                                wordBreak: 'break-word'
+                                              }}>
+                                                <div className="font-medium text-green-800" style={{
+                                                  wordBreak: 'break-word', 
+                                                  overflowWrap: 'break-word',
+                                                  lineHeight: '1.2'
+                                                }}>
+                                                  {item.split(':')[0]}:
+                                                </div>
+                                                <div className="text-xs leading-tight text-green-700 line-through opacity-75" style={{
+                                                  wordBreak: 'break-word', 
+                                                  overflowWrap: 'break-word',
+                                                  lineHeight: '1.2'
+                                                }}>
+                                                  {item.split(':').slice(1).join(':').trim()}
+                                                </div>
+                                              </div>
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </>
                             );
-                          })}
+                          })()}
                         </div>
                       )}
                     </div>
@@ -4794,6 +5018,91 @@ function App() {
         emailArchive={emailArchive}
         emailThreads={emailThreads}
       />
+
+      {/* Migration Modal */}
+      {showMigrationModal && console.log('🎯 RENDERING MIGRATION MODAL') || showMigrationModal && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center" 
+          style={{
+            zIndex: 99999, 
+            position: 'fixed', 
+            top: 0, 
+            left: 0, 
+            right: 0, 
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)'
+          }}>
+          <div 
+            className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-2xl" 
+            style={{
+              zIndex: 100000,
+              backgroundColor: 'white',
+              boxShadow: '0 20px 60px rgba(0,0,0,0.3)'
+            }}>
+            <div className="flex items-center mb-4">
+              <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center mr-3">
+                <span className="text-blue-600 text-lg">☁️</span>
+              </div>
+              <h2 className="text-xl font-bold text-gray-900">Migrate to Cloud</h2>
+            </div>
+            
+            <div className="mb-4">
+              <p className="text-gray-600 mb-2">
+                We've detected that you have local data that can be migrated to the cloud for real-time collaboration.
+              </p>
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                <div className="flex items-center mb-2">
+                  <span className="text-blue-600 text-sm font-medium">Migration Status:</span>
+                </div>
+                <div className="text-sm text-blue-800">
+                  {migrationStatus?.hasLocalData && (
+                    <div className="flex items-center mb-1">
+                      <span className="w-2 h-2 bg-green-500 rounded-full mr-2"></span>
+                      Local data found
+                    </div>
+                  )}
+                  {migrationStatus?.hasSupabaseData && (
+                    <div className="flex items-center mb-1">
+                      <span className="w-2 h-2 bg-blue-500 rounded-full mr-2"></span>
+                      Cloud data found
+                    </div>
+                  )}
+                  {migrationStatus?.needsMigration && (
+                    <div className="flex items-center">
+                      <span className="w-2 h-2 bg-yellow-500 rounded-full mr-2"></span>
+                      Migration needed
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+            
+            <div className="flex gap-3">
+              <button
+                onClick={skipMigration}
+                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
+                disabled={isMigrating}
+              >
+                Skip for Now
+              </button>
+              <button
+                onClick={handleMigration}
+                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50"
+                disabled={isMigrating}
+              >
+                {isMigrating ? 'Migrating...' : 'Migrate Now'}
+              </button>
+            </div>
+            
+            {isMigrating && (
+              <div className="mt-4 text-center">
+                <div className="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                <span className="ml-2 text-sm text-gray-600">Moving your data to the cloud...</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
 
     </div>

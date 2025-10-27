@@ -1,0 +1,12 @@
+# Copy this content to create .env.local file in your psh-tracker folder
+
+# Supabase Configuration (Vite format)
+VITE_SUPABASE_URL=https://zjhpiabxwixkfndcvmoh.supabase.co
+VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpqaHBpYWJ4d2l4a2ZuZGN2bW9oIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjEyNTE3MDQsImV4cCI6MjA3NjgyNzcwNH0.2TEP7vE1jA88BLc9sBRQA0ySGmmyUMhcp0x-8CQFsos
+
+# Allowed Emails (comma-separated)
+VITE_ALLOWED_EMAILS=*@ihipdxor.com,vibrant.psh.tracker@outlook.com,kodycbarnett@gmail.com
+
+# Keep your existing Azure MSAL variables (add your actual values):
+# VITE_MSAL_CLIENT_ID=your_existing_value
+# VITE_MSAL_TENANT_ID=your_existing_value
