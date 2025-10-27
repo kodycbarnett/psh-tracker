@@ -1336,7 +1336,7 @@ function App() {
       }
       
       // Fall back to localStorage (only if not using Supabase)
-      const shouldUseSupabase = localStorage.getItem('psh_use_supabase') === 'true';
+      const shouldUseSupabase = typeof window !== 'undefined' && localStorage.getItem('psh_use_supabase') === 'true';
       if (shouldUseSupabase) {
         console.log('⏭️ Skipping localStorage fallback - using Supabase');
         return; // Don't load from localStorage if we're using Supabase
