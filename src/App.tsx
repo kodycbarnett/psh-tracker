@@ -1366,7 +1366,7 @@ function App() {
       const loadedApplicants = loadFromLocalStorage(STORAGE_KEYS.APPLICANTS, initialApplicants);
       
       // Load email archive
-    const savedEmailArchive = localStorage.getItem('psh_email_archive');
+    const savedEmailArchive = getLocalStorage('psh_email_archive');
     if (savedEmailArchive) {
       try {
         const parsedArchive = JSON.parse(savedEmailArchive);
@@ -1378,7 +1378,7 @@ function App() {
     }
 
     // Load email threads
-    const savedEmailThreads = localStorage.getItem('psh_email_threads');
+    const savedEmailThreads = getLocalStorage('psh_email_threads');
     if (savedEmailThreads) {
       try {
         const parsedThreads = JSON.parse(savedEmailThreads);
