@@ -1388,6 +1388,7 @@ function App() {
       if (useSupabase && isSupabaseConnected) {
         // Save to Supabase
         console.log('💾 Auto-saving applicants to Supabase:', applicants.length, 'applicants');
+        console.log('🔍 Auto-save conditions:', { useSupabase, isSupabaseConnected, applicantsLength: applicants.length });
         try {
           for (const applicant of applicants) {
             // Convert app format to Supabase format
