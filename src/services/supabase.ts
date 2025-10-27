@@ -252,6 +252,10 @@ export const supabaseService = {
   },
 
   async updateApplicant(id: string, updates: any) {
+    if (!supabase) {
+      throw new Error('Supabase is not configured');
+    }
+    
     const { data, error } = await supabase
       .from('applicants')
       .update({ ...updates, updated_at: new Date().toISOString() })
@@ -270,6 +274,25 @@ export const supabaseService = {
       .eq('id', id)
     
     if (error) throw error
+  },
+
+  async createOrUpdateApplicant(applicantData: any) {
+    if (!supabase) {
+      throw new Error('Supabase is not configured');
+    }
+    
+    // Use upsert to insert or update
+    const { data, error } = await supabase
+      .from('applicants')
+      .upsert(applicantData, { 
+        onConflict: 'id',
+        ignoreDuplicates: false 
+      })
+      .select()
+      .single()
+    
+    if (error) throw error
+    return data
   },
 
   // Email Templates

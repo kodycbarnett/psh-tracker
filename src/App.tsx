@@ -1279,7 +1279,7 @@ function App() {
     checkSupabaseConnection();
   }, []);
 
-  // Load data from Supabase or localStorage on app startup
+      // Load data from Supabase or localStorage on app startup
   useEffect(() => {
       const loadData = async () => {
       // First, try to load from Supabase if connected OR if we've migrated
@@ -1380,23 +1380,68 @@ function App() {
 
   // Enhanced auto-save with backup and sync
   useEffect(() => {
-    // Don't auto-save to localStorage if we're using Supabase
-    const useSupabase = localStorage.getItem('psh_use_supabase') === 'true';
-    
-    if (applicants.length > 0 && !useSupabase) {
-      console.log('Saving applicants to localStorage:', applicants.length, 'applicants');
-      const success = saveToLocalStorage(STORAGE_KEYS.APPLICANTS, applicants);
-      if (success) {
-        console.log('Successfully saved applicants to localStorage');
-        broadcastDataChange('applicants', applicants);
-        checkAndCreateBackup();
+    const saveApplicants = async () => {
+      if (applicants.length === 0) return;
+      
+      const useSupabase = localStorage.getItem('psh_use_supabase') === 'true';
+      
+      if (useSupabase && isSupabaseConnected) {
+        // Save to Supabase
+        console.log('💾 Auto-saving applicants to Supabase:', applicants.length, 'applicants');
+        try {
+          for (const applicant of applicants) {
+            // Convert app format to Supabase format
+            // Remove 'applicant_' prefix if it exists for Supabase compatibility
+            const supabaseId = applicant.id.replace(/^applicant_/, '');
+            
+            // Use upsert (insert or update) for better reliability
+            const buildingId = '00000000-0000-0000-0000-000000000001';
+            await supabaseService.createOrUpdateApplicant({
+              id: supabaseId,
+              building_id: buildingId,
+              name: applicant.name,
+              unit: applicant.unit || null,
+              hmis_number: applicant.hmisNumber || null,
+              phone: applicant.phone || null,
+              email: applicant.email || null,
+              case_manager: applicant.caseManager || null,
+              case_manager_phone: applicant.caseManagerPhone || null,
+              case_manager_email: applicant.caseManagerEmail || null,
+              current_stage: applicant.currentStage,
+              documents: applicant.documents || {},
+              family_members: applicant.familyMembers || [],
+              stage_history: (applicant.stageHistory || []).map((entry: any) => ({
+                ...entry,
+                timestamp: entry.timestamp instanceof Date ? entry.timestamp.toISOString() : entry.timestamp
+              })),
+              manual_notes: (applicant.manualNotes || []).map((note: any) => ({
+                ...note,
+                timestamp: note.timestamp instanceof Date ? note.timestamp.toISOString() : note.timestamp
+              })),
+              completed_action_items: applicant.completedActionItems || [],
+              date_created: applicant.dateCreated instanceof Date ? applicant.dateCreated.toISOString() : applicant.dateCreated
+            });
+          }
+          console.log('✅ Successfully saved applicants to Supabase');
+        } catch (error) {
+          console.error('❌ Failed to save applicants to Supabase:', error);
+        }
       } else {
-        console.error('Failed to save applicants to localStorage');
+        // Save to localStorage
+        console.log('Saving applicants to localStorage:', applicants.length, 'applicants');
+        const success = saveToLocalStorage(STORAGE_KEYS.APPLICANTS, applicants);
+        if (success) {
+          console.log('Successfully saved applicants to localStorage');
+          broadcastDataChange('applicants', applicants);
+          checkAndCreateBackup();
+        } else {
+          console.error('Failed to save applicants to localStorage');
+        }
       }
-    } else if (applicants.length > 0 && useSupabase) {
-      console.log('⏭️ Skipping localStorage save - using Supabase');
-    }
-  }, [applicants]);
+    };
+    
+    saveApplicants();
+  }, [applicants, isSupabaseConnected]);
 
   useEffect(() => {
     if (emailTemplates.length > 0) {
