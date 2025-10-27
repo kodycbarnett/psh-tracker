@@ -7,6 +7,26 @@ import EmailModal from './components/EmailModal';
 import EmailInterface from './components/EmailInterface';
 import { supabaseService, MigrationService } from './services/supabase';
 
+// Browser-safe localStorage helper
+const getLocalStorage = (key: string): string | null => {
+  if (typeof window === 'undefined') return null;
+  try {
+    return localStorage.getItem(key);
+  } catch (error) {
+    console.error('localStorage access failed:', error);
+    return null;
+  }
+};
+
+const setLocalStorage = (key: string, value: string): void => {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(key, value);
+  } catch (error) {
+    console.error('localStorage write failed:', error);
+  }
+};
+
 // Secure ID generation utility
 const generateSecureId = (prefix: string = ''): string => {
   // Use crypto.randomUUID() if available, fallback to secure alternative
@@ -1283,7 +1303,7 @@ function App() {
   useEffect(() => {
       const loadData = async () => {
       // First, try to load from Supabase if connected OR if we've migrated
-      const shouldUseSupabase = localStorage.getItem('psh_use_supabase') === 'true';
+      const shouldUseSupabase = getLocalStorage('psh_use_supabase') === 'true';
       const useSupabase = isSupabaseConnected && (shouldUseSupabase || !migrationStatus?.hasLocalData);
       
       if (useSupabase) {
@@ -1336,7 +1356,7 @@ function App() {
       }
       
       // Fall back to localStorage (only if not using Supabase)
-      const shouldUseSupabase = typeof window !== 'undefined' && localStorage.getItem('psh_use_supabase') === 'true';
+      const shouldUseSupabase = getLocalStorage('psh_use_supabase') === 'true';
       if (shouldUseSupabase) {
         console.log('⏭️ Skipping localStorage fallback - using Supabase');
         return; // Don't load from localStorage if we're using Supabase
@@ -1389,7 +1409,7 @@ function App() {
     const saveApplicants = async () => {
       if (applicants.length === 0) return;
       
-      const useSupabase = localStorage.getItem('psh_use_supabase') === 'true';
+      const useSupabase = getLocalStorage('psh_use_supabase') === 'true';
       
       if (useSupabase && isSupabaseConnected) {
         // Save to Supabase
