@@ -2307,7 +2307,7 @@ function App() {
         setShowMigrationModal(false);
         // Clear localStorage and set Supabase flag
         MigrationService.clearLocalStorageData();
-        localStorage.setItem('psh_use_supabase', 'true');
+        setLocalStorage('psh_use_supabase', 'true');
         // Reload the page to start fresh with Supabase
         window.location.reload();
       } else {
